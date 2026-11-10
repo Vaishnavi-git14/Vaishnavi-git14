@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — Expense Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="page-wrapper">
+
+    <!-- Navbar -->
+    <nav class="navbar">
+        <span class="brand">💸 ExpenseIQ</span>
+        <div class="nav-links">
+            <span class="user-chip">👤 {{ username }}</span>
+            <a href="/add" class="btn-nav">+ Add</a>
+            <a href="/logout">Logout</a>
+        </div>
+    </nav>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-messages">
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+        <div class="stat-card income">
+            <div class="stat-icon">💰</div>
+            <div class="stat-label">Total Income</div>
+            <div class="stat-value">₹{{ "%.2f"|format(total_income) }}</div>
+        </div>
+        <div class="stat-card expense">
+            <div class="stat-icon">💸</div>
+            <div class="stat-label">Total Expenses</div>
+            <div class="stat-value">₹{{ "%.2f"|format(total_expense) }}</div>
+        </div>
+        <div class="stat-card balance">
+            <div class="stat-icon">📊</div>
+            <div class="stat-label">Net Balance</div>
+            <div class="stat-value">₹{{ "%.2f"|format(balance) }}</div>
+        </div>
+    </div>
+
+    <!-- Dashboard Grid: Transactions + Chart -->
+    <div class="dashboard-grid">
+
+        <!-- Transactions Panel -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>📋 Transactions</h2>
+                <a href="/add" class="btn-add">+ Add New</a>
+            </div>
+
+            <!-- Filter Bar -->
+            <form method="GET" action="/dashboard">
+                <div class="filter-bar">
+                    <select name="month">
+                        <option value="">All Months</option>
+                        {% for m_num, m_name in [('1','Jan'),('2','Feb'),('3','Mar'),('4','Apr'),('5','May'),('6','Jun'),('7','Jul'),('8','Aug'),('9','Sep'),('10','Oct'),('11','Nov'),('12','Dec')] %}
+                            <option value="{{ m_num }}" {% if selected_month == m_num %}selected{% endif %}>{{ m_name }}</option>
+                        {% endfor %}
+                    </select>
+                    <select name="year">
+                        <option value="">All Years</option>
+                        {% for y in ['2023','2024','2025','2026'] %}
+                            <option value="{{ y }}" {% if selected_year == y %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+                    <a href="/dashboard" class="btn btn-sm" style="background:rgba(255,255,255,0.05);color:var(--muted);border:1px solid var(--border);">Clear</a>
+                </div>
+            </form>
+
+            <!-- Transactions Table -->
+            <div class="table-wrapper">
+                {% if transactions %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Amount</th>
+                            <th>Type</th>
+                            <th>Category</th>
+                            <th>Date</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for t in transactions %}
+                        <tr>
+                            <td>{{ t[1] }}</td>
+                            <td class="{{ 'amount-income' if t[3] == 'Income' else 'amount-expense' }}">
+                                {{ '+' if t[3] == 'Income' else '-' }}₹{{ "%.2f"|format(t[2]|float) }}
+                            </td>
+                            <td>
+                                <span class="badge {{ 'badge-income' if t[3] == 'Income' else 'badge-expense' }}">
+                                    {{ t[3] }}
+                                </span>
+                            </td>
+                            <td><span class="badge badge-cat">{{ t[4] }}</span></td>
+                            <td>{{ t[5] }}</td>
+                            <td>
+                                <!-- FIX: Delete via POST with CSRF, not GET -->
+                                <form class="delete-form" method="POST" action="/delete/{{ t[0] }}"
+                                      onsubmit="return confirm('Delete this transaction?')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state">
+                    <span>📭</span>
+                    <p>No transactions found. <a href="/add" style="color:var(--accent)">Add your first one!</a></p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Sidebar: Spending Chart -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>📈 Spending by Category</h2>
+            </div>
+            {% if categories %}
+            <div class="chart-wrapper">
+                <canvas id="categoryChart"></canvas>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <span>📊</span>
+                <p>No expense data for chart yet.</p>
+            </div>
+            {% endif %}
+        </div>
+
+    </div><!-- /dashboard-grid -->
+
+</div><!-- /page-wrapper -->
+
+<script>
+    // Category Pie Chart (Chart.js)
+    const categories = {{ categories | tojson }};
+    const amounts    = {{ cat_amounts | tojson }};
+
+    if (categories.length > 0) {
+        const COLORS = [
+            '#7c6eff','#ff5e87','#00e5a0','#ffc94d',
+            '#4dd9ff','#ff9a5e','#c35eff','#5effa3',
+            '#ff5e5e','#5e9fff'
+        ];
+
+        new Chart(document.getElementById('categoryChart'), {
+            type: 'doughnut',
+            data: {
+                labels: categories,
+                datasets: [{
+                    data: amounts,
+                    backgroundColor: COLORS.slice(0, categories.length),
+                    borderColor: 'rgba(0,0,0,0)',
+                    borderWidth: 0,
+                    hoverOffset: 12
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '65%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#8b8ba8', font: { family: 'Inter', size: 11 },
+                            padding: 12, usePointStyle: true
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#12121e',
+                        titleColor: '#fff', bodyColor: '#fff',
+                        borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1,
+                        callbacks: {
+                            label: ctx => ` ₹${ctx.parsed.toFixed(2)}`
+                        }
+                    }
+                }
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
